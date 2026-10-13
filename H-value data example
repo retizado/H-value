@@ -1,0 +1,143 @@
+# SECTION 1: INSTALLATION OF REQUIRED PACKAGES
+
+# Install necessary package
+BiocManager::install("TCGAbiolinks")
+
+# Update these packages which are often outdated, restart R before
+install.packages("fastmap")
+install.packages("xfun")
+
+# SECTION 2: LOADING LIBRARIES
+
+# Load the necessary library
+library(TCGAbiolinks)
+
+# SECTION 3: TCGA DATA QUERY (EXAMPLE WITH COAD)
+
+# NOTE: This section demonstrates the complete workflow using TCGA-COAD (Colon Adenocarcinoma) 
+# as an example. To download data for the other 5 cancer types included in this study,
+# replace "TCGA-COAD" with one of the following codes:
+#
+#   • TCGA-KIRC  → Kidney Renal Clear Cell Carcinoma
+#   • TCGA-LIHC  → Liver Hepatocellular Carcinoma
+#   • TCGA-LUAD  → Lung Adenocarcinoma
+#   • TCGA-OV    → Ovarian Serous Cystadenocarcinoma
+#   • TCGA-STAD  → Stomach Adenocarcinoma
+#
+# EXAMPLE USAGE FOR MULTIPLE CANCERS:
+# ------------------------------------
+# Option A: Modify line below and run separately for each cancer
+#   project_id <- "TCGA-LUAD"
+#
+# Option B: Use a loop (recommended for batch processing)
+#   cancer_list <- c("TCGA-COAD", "TCGA-KIRC", "TCGA-LIHC", 
+#                    "TCGA-LUAD", "TCGA-OV", "TCGA-STAD")
+#   for (cancer in cancer_list) {
+#     query <- GDCquery(project = cancer, ...)
+#     ...
+#   }
+
+# To access the data we want to work with (CHANGE PROJECT ID AS NEEDED)
+query <- GDCquery(project = "TCGA-COAD",  # Project from which we want to obtain data
+                  # For other cancers, replace with:
+                  # TCGA-KIRC, TCGA-LIHC, TCGA-LUAD, TCGA-OV, TCGA-STAD
+                  data.category = "Transcriptome Profiling", # Category of the data: gene expression
+                  data.type = "Gene Expression Quantification", # Type of data: mRNA measurements in samples
+                  workflow.type = "STAR - Counts") # Workflow used: STAR alignment generating read counts
+
+# SECTION 4: OBTAINING SAMPLE METADATA
+
+# This allows us to access metadata related to the samples associated with the query.
+samplesDown <- getResults(query, cols = c("cases")) # 'cases' column contains sample identifiers
+
+# SECTION 5: FILTERING BY SAMPLE TYPE (PRIMARY TUMOR)
+
+# The TCGAquery_SampleTypes function filters and obtains information about sample types 
+# associated with sample barcodes in the TCGA project dataset
+dataSmTP <- TCGAquery_SampleTypes(barcode = samplesDown,
+                                  typesample = "TP") # TP = Primary Tumor
+
+# If you also want normal tissue samples, use:
+# typesample = c("TP", "NT")  # NT = Solid Tissue Normal
+
+# SECTION 6: SECOND QUERY WITH FILTERED SAMPLES
+
+# The GDCquery function performs a query on GDC (Genomic Data Commons), specifying 
+# what data you want to recover from the TCGA portal
+queryDown <- GDCquery(project = "TCGA-COAD", # Replace with your target cancer project
+                      data.category = "Transcriptome Profiling", # Transcriptomic profile category
+                      data.type = "Gene Expression Quantification", # Gene expression quantification
+                      workflow.type = "STAR - Counts", # STAR workflow for gene expression
+                      barcode = dataSmTP) # Filter to only include primary tumor samples
+
+
+# SECTION 7: DATA DOWNLOAD
+
+# The GDCdownload function downloads the STAR-Counts expression data
+GDCdownload(queryDown, method = "api") # Uses GDC API for download
+
+# SECTION 8: PREPARING DATA IN R OBJECT
+
+# The GDCprepare function reads the downloaded data and prepares it in an R object
+cancerData <- GDCprepare(queryDown)
+
+# IMPORTANT: Save your data immediately after preparation
+saveRDS(cancerData, file = "TCGA-COAD_RNAseq_data.rds") # Change filename for each cancer
+
+# SECTION 9: EXTRACTION OF FPKM-UQ VALUES
+
+# To obtain fpkm_uq data you need to use the SummarizedExperiment package
+library(SummarizedExperiment)
+
+# The assays function allows us to extract specific data matrices
+FPKMUQ <- assays(cancerData)$fpkm_uq_unstrand
+
+# Note: Other available assays may include:
+#   - counts (raw counts)
+#   - fpkm (normalized FPKM)
+#   - fpkm_uq (upper quartile normalized FPKM)
+
+# SECTION 10: CONVERSION TO DATA FRAME
+
+# Convert the matrix to a data frame (table format for easier manipulation)
+TCGAtabla <- data.frame(FPKMUQ)
+
+# Add gene IDs as a column for easier reference
+TCGAtabla$gene_id <- rownames(TCGAtabla)
+
+# SECTION 11: SELECTION OF SPECIFIC GENES
+
+# To select specific genes by their ENSG ID
+
+Genes <- TCGAtabla[c("ENSG00000089157","ENSG00000196262","ENSG00000112592","ENSG00000166710","ENSG00000165704","ENSG00000073578","ENSG00000150991","ENSG00000164924","ENSG00000102144","ENSG00000156508","ENSG00000142541","ENSG00000256269","ENSG00000231500","ENSG00000133704","ENSG00000115364","ENSG00000187514","ENSG00000072274","ENSG00000110700","ENSG00000126067","ENSG00000179091","ENSG00000144713","ENSG00000023330","ENSG00000127022","ENSG00000229117","ENSG00000141367","ENSG00000134644","ENSG00000008952","ENSG00000165280","ENSG00000108349"),]
+
+# SECTION 12: EXPORT TO CSV
+
+# Load CSV writing library (base R includes write.csv, no additional package needed)
+# Library openxlsx is optional for more Excel features
+library(openxlsx)
+
+# Save as CSV (universally compatible format)
+write.csv(Genes, "Genes_TCGA-COAD.csv", row.names = FALSE)
+
+# SECTION 13: EXPORT TO EXCEL
+
+# Install package if you don't have it
+if (!require("writexl", quietly = TRUE)) {
+  install.packages("writexl")
+}
+
+# Load the library
+library(writexl)
+
+# Save in an Excel file (.xlsx)
+write_xlsx(Genes, "Genes_TCGA-COAD.xlsx")
+
+# SECTION 14: H-VALUE CALCULATION FOR GENE STABILITY ANALYSIS
+
+# H-value function for gene stability calculation
+h_value <- function(x) {
+  med <- median(x, na.rm = TRUE)
+  s   <- sd    (x, na.rm = TRUE)
+  ifelse(med == 0 || is.na(med) || is.na(s) || s == 0, NA_real_, med / s)
+}
