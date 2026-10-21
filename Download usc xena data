@@ -1,0 +1,80 @@
+# =============================================================================
+# STEP 1: DOWNLOAD DATASET FROM UCSC XENA
+# =============================================================================
+
+dataset_elegido <- "CellLinePolyA_21.06_ensembl_expCount_2024-11-18.tsv"
+
+cat(sprintf("Downloading: %s\n", dataset_elegido))
+
+xe <- XenaData %>%
+  filter(XenaDatasets == dataset_elegido) %>%
+  XenaGenerate()
+
+print(xe)
+
+xq <- XenaQuery(xe)
+dl <- XenaDownload(xq, destdir = "data_external")
+
+# =============================================================================
+# STEP 2: LOAD AND CLEAN DATA
+# =============================================================================
+
+# Find downloaded file
+files_all <- list.files("data_external", 
+                        pattern = "\\.(tsv|gz)$",
+                        recursive = TRUE, full.names = TRUE)
+
+if (length(files_all) == 0) {
+  stop("No files found in data_external directory")
+}
+
+archivo_expr <- files_all[1]
+cat(paste0("Loading: ", archivo_expr, "\n"))
+
+# Read TSV with Ensembl IDs as row names
+expr_matrix <- read.delim(archivo_expr, row.names = 1,
+                          check.names = FALSE, stringsAsFactors = FALSE)
+
+cat(sprintf("Matrix loaded: %d genes x %d samples\n", 
+            nrow(expr_matrix), ncol(expr_matrix)))
+
+# Clean Ensembl version suffixes and NA values
+rownames(expr_matrix) <- gsub("\\.[0-9]+$", "", rownames(expr_matrix))
+expr_matrix[is.na(expr_matrix)] <- 0
+
+# =============================================================================
+# STEP 3: FILTER FOR THE 29 TARGET REFERENCE GENES
+# =============================================================================
+
+genes_objetivo <- c(
+  "ENSG00000089157", "ENSG00000196262", "ENSG00000112592", "ENSG00000166710",
+  "ENSG00000165704", "ENSG00000073578", "ENSG00000150991", "ENSG00000164924",
+  "ENSG00000102144", "ENSG00000156508", "ENSG00000142541", "ENSG00000256269",
+  "ENSG00000231500", "ENSG00000133704", "ENSG00000115364", "ENSG00000187514",
+  "ENSG00000072274", "ENSG00000110700", "ENSG00000126067", "ENSG00000179091",
+  "ENSG00000144713", "ENSG00000023330", "ENSG00000127022", "ENSG00000229117",
+  "ENSG00000141367", "ENSG00000134644", "ENSG00000008952", "ENSG00000165280",
+  "ENSG00000108349"
+)
+
+# Filter matrix to target genes
+expr_filtrada <- expr_matrix[rownames(expr_matrix) %in% genes_objetivo, ]
+
+encontrados <- intersect(genes_objetivo, rownames(expr_filtrada))
+faltantes   <- setdiff(genes_objetivo, rownames(expr_filtrada))
+
+cat(sprintf("\nGenes found: %d/%d\n", length(encontrados), length(genes_objetivo)))
+
+if (length(faltantes) > 0) {
+  cat("Missing genes:\n")
+  print(faltantes)
+}
+
+# Filter out samples with zero expression in all genes
+expr_filtrada <- expr_filtrada[, colSums(expr_filtrada) > 0]
+
+write.csv(expr_filtrada, "data_external/expression_matrix_filtered.csv", 
+          row.names = TRUE)
+
+cat(sprintf("Final matrix: %d genes x %d samples\n\n", 
+            nrow(expr_filtrada), ncol(expr_filtrada)))
